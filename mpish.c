@@ -3,7 +3,7 @@
 
 int main(void) {
     int my_rank, comm_sz;
-     
+
     /* Let the system do what it needs to start up MPI */
     MPI_Init(NULL, NULL);
 
@@ -12,6 +12,11 @@ int main(void) {
 
     /* Find out how many processes are being used */
     MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);
+
+    if(myRank == 0) {
+        printf("\n");
+    }
+
 
     /* Shut down MPI */
     MPI_Finalize();
