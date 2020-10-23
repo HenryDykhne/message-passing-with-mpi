@@ -2,3 +2,4 @@ sampleCode/makefile
 sampleCode/mpi_Bcast.c
 sampleCode/mpi_hello.c
 sampleCode/mpi_SendRec.c
+.vscode/c_cpp_properties.json
