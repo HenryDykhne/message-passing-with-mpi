@@ -91,6 +91,37 @@ void printUsage() {
     printf("exit\n");
 }
 
+void storageProcGet(int myRank){
+    int length;
+    MPI_Status status;
+    //recive fileName
+    MPI_Probe(0, 0, MPI_COMM_WORLD, &status);
+    MPI_Get_count(&status, MPI_CHAR, &length);
+    char * fileName = (char*)malloc(sizeof(char) * length);
+    MPI_Recv(fileName, length, MPI_CHAR, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+    //sendFile
+    MPI_File  file;
+    struct stat st;
+
+    char filePath[MAX_INPUT_CHARS];
+    char strNum[99]; 
+    sprintf(strNum, "%d", myRank); 
+    strcpy(filePath, "p");
+    strcat(filePath, strNum);
+    strcat(filePath, "/");
+    strcat(filePath, fileName);
+
+    stat(filePath, &st);
+    int size = st.st_size;
+    unsigned char * contents = (unsigned char*)calloc(sizeof(unsigned char), size);
+ 
+    MPI_File_open(MPI_COMM_SELF, filePath, MPI_MODE_RDWR, MPI_INFO_NULL, &file);
+    MPI_File_read(file, contents, size, MPI_BYTE, MPI_STATUS_IGNORE);
+    MPI_Send(contents, size, MPI_BYTE, 0, 0, MPI_COMM_WORLD);
+    MPI_File_close(&file);
+}
+
 void storageProcPut(int myRank){
     int length;
     MPI_Status status;
@@ -104,10 +135,9 @@ void storageProcPut(int myRank){
     //fileContents
     MPI_Probe(0, 0, MPI_COMM_WORLD, &status);
     MPI_Get_count(&status, MPI_BYTE, &length);
-    unsigned char * content = (unsigned char*)malloc(sizeof(unsigned char) * length);
+    unsigned char * content = (unsigned char*)calloc(sizeof(unsigned char), length);
     MPI_Recv(content, length, MPI_BYTE, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-    fflush(stdout);
     char filePath[MAX_INPUT_CHARS];
     char strNum[99]; 
     sprintf(strNum, "%d", myRank); 
@@ -115,7 +145,7 @@ void storageProcPut(int myRank){
     strcat(filePath, strNum);
     strcat(filePath, "/");
     strcat(filePath, fileName);
-
+    
     MPI_File file;
     MPI_File_open(MPI_COMM_SELF, filePath, MPI_MODE_RDWR | MPI_MODE_CREATE, MPI_INFO_NULL, &file);
     MPI_File_write(file, content, length, MPI_BYTE, MPI_STATUS_IGNORE);
@@ -132,7 +162,6 @@ void sendCheckHaveFile(int myRank) {
     char * fileName = (char*)malloc(sizeof(char) * length);
     MPI_Recv(fileName, length, MPI_CHAR, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-    fflush(stdout);
     char filePath[MAX_INPUT_CHARS];
     char strNum[99]; 
     sprintf(strNum, "%d", myRank); 
@@ -144,7 +173,7 @@ void sendCheckHaveFile(int myRank) {
     int response;
     if(access(filePath, F_OK ) == -1 ) {
         response = -1;
-    }else{
+    } else {
         response = myRank;
     }
     MPI_Send(&response, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
@@ -163,7 +192,7 @@ void storageProcess(int *myRank, int *commSz, bool *endProg) {
             break;
 
         case get:
-            // statements
+            storageProcGet(*myRank);
             break;
 
         case ls:
@@ -185,7 +214,7 @@ void storageProcess(int *myRank, int *commSz, bool *endProg) {
 
 int whoHasFile(int commSz, char * baseFileName){
     enum Commands command = checkHave;
-    int have = 0;
+    int buff = -1;
     int loc = -1;
     for (int i = 1; i < commSz; i++) {
         //telling what the process needs to do
@@ -193,15 +222,16 @@ int whoHasFile(int commSz, char * baseFileName){
         MPI_Send(baseFileName, strlen(baseFileName) + 1, MPI_CHAR, i, 0, MPI_COMM_WORLD);
     }
     for (int i = 1; i < commSz; i++) {
-        MPI_Recv(&have, 1, MPI_INT, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        if(have == 1) {
+        MPI_Recv(&buff, 1, MPI_INT, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        if(buff != -1) {
             loc = i;
+            buff = -1;
         }
     }
     return loc;
 }
 
-void shellPut(int *commSz, int command, char * fileName, char * baseFileName, int procNum){
+void shellPut(int *commSz, enum Commands command, char * fileName, char * baseFileName, int procNum){
     if( access(fileName, F_OK ) == -1 ) {
         printf("File does not exist");
         return;
@@ -228,18 +258,44 @@ void shellPut(int *commSz, int command, char * fileName, char * baseFileName, in
 
     stat(fileName, &st);
     int size = st.st_size;
-    unsigned char * contents[size];
-    fflush(stdout);
-    MPI_File_open(MPI_COMM_SELF, fileName, MPI_MODE_RDWR, MPI_INFO_NULL, &file);
+    unsigned char * contents = (unsigned char*)calloc(sizeof(unsigned char), size);
+    char filePath[MAX_INPUT_CHARS];
+    strcpy(filePath, fileName);
+    MPI_File_open(MPI_COMM_SELF, filePath, MPI_MODE_RDWR, MPI_INFO_NULL, &file);
     MPI_File_read(file, contents, size, MPI_BYTE, MPI_STATUS_IGNORE);
     MPI_Send(contents, size, MPI_BYTE, procNum, 0, MPI_COMM_WORLD);
     MPI_File_close(&file);
 }
 
-void shellGet(enum Commands command, int *commSz){
-    for (int i = 1; i < *commSz; i++) {
-        
+void shellGet(int *commSz, enum Commands command, char * baseFileName){
+    int fileLoc = whoHasFile(*commSz, baseFileName);
+    if(fileLoc == -1){
+        printf("The file could not be found in the system\n");
+        return;
     }
+
+    //telling what the process needs to do
+    MPI_Send(&command, 1, MPI_INT, fileLoc, 0, MPI_COMM_WORLD);
+
+    //sendTitle
+    MPI_Send(baseFileName, strlen(baseFileName) + 1, MPI_CHAR, fileLoc, 0, MPI_COMM_WORLD);
+    
+    //recive fileContents
+    MPI_File file;
+    MPI_Status status;
+    int length;
+    MPI_Probe(fileLoc, 0, MPI_COMM_WORLD, &status);
+    MPI_Get_count(&status, MPI_BYTE, &length);
+    unsigned char * content = (unsigned char*)calloc(sizeof(unsigned char), length);
+    MPI_Recv(content, length, MPI_BYTE, fileLoc, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+    //write file localy
+    char filePath[MAX_INPUT_CHARS];
+    strcpy(filePath, baseFileName);
+    MPI_File_open(MPI_COMM_SELF, filePath, MPI_MODE_RDWR | MPI_MODE_CREATE, MPI_INFO_NULL, &file);
+    MPI_File_write(file, content, length, MPI_BYTE, MPI_STATUS_IGNORE);
+    MPI_File_close(&file);
+    free(content);
 }
 
 void shellLs(enum Commands command, int *commSz){
@@ -286,14 +342,13 @@ void shellProcess(int *commSz, bool *endProg) {
     char *baseFileName;
     getInput(commSz, &command, &fileName, &procNum,  &argv);
     baseFileName = basename(fileName);
-    printf("%d | %s | %s | %d\n", command, fileName, baseFileName, procNum);
     switch (command){
         case put:
             shellPut(commSz, command, fileName, baseFileName, procNum);
             break;
 
         case get:
-            // statements
+            shellGet(commSz, command, baseFileName);
             break;
 
         case ls:
