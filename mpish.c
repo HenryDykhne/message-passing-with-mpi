@@ -256,7 +256,7 @@ int whoHasFile(int commSz, char * baseFileName){
 
 void shellPut(int *commSz, enum Commands command, char * fileName, char * baseFileName, int procNum){
     if( access(fileName, F_OK ) == -1 ) {
-        printf("File does not exist");
+        printf("File does not exist\n");
         return;
     }
     
