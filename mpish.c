@@ -8,6 +8,7 @@
 #include <sys/stat.h> 
 #include <sys/types.h> 
 #include <sys/wait.h>
+#include <dirent.h> 
 
 const int MAX_INPUT_CHARS = 4096;
 enum Commands {put, get, ls, lls, lrm, checkHave, end, unknown};
@@ -179,6 +180,28 @@ void sendCheckHaveFile(int myRank) {
     MPI_Send(&response, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
 }
 
+void storageProcLs(int myRank) {
+    char directoryName[100];
+    char strNum[99]; 
+    sprintf(strNum, "%d", myRank); 
+    strcpy(directoryName, "p");
+    strcat(directoryName, strNum);
+
+    struct dirent *de;  // Pointer for directory entry 
+    char output[MAX_INPUT_CHARS];
+    DIR *dr = opendir(directoryName); 
+    strcpy(output, "");
+    while ((de = readdir(dr)) != NULL) {
+        if(strcmp(de->d_name, "..") != 0 && strcmp(de->d_name, ".") != 0){
+            strcat(output, "        ");
+            strcat(output, de->d_name);
+            strcat(output, "\n");
+        }
+    }
+    closedir(dr); 
+    MPI_Send(output, strlen(output) + 1, MPI_CHAR, 0, 0, MPI_COMM_WORLD);
+}
+
 void storageProcess(int *myRank, int *commSz, bool *endProg) {
     enum Commands command;
     MPI_Status status;
@@ -196,7 +219,7 @@ void storageProcess(int *myRank, int *commSz, bool *endProg) {
             break;
 
         case ls:
-            // statements
+            storageProcLs(*myRank);
             break;
         case checkHave:
             sendCheckHaveFile(*myRank);
@@ -298,10 +321,31 @@ void shellGet(int *commSz, enum Commands command, char * baseFileName){
     free(content);
 }
 
-void shellLs(enum Commands command, int *commSz){
+void shellLs(int *commSz, enum Commands command) {
+    char output[MAX_INPUT_CHARS];
+    strcpy(output, "");
+  
     for (int i = 1; i < *commSz; i++) {
-        
+        MPI_Send(&command, 1, MPI_INT, i, 0, MPI_COMM_WORLD);
     }
+
+    for (int i = 1; i < *commSz; i++) {
+        int length;
+        MPI_Status status;
+        MPI_Probe(i, 0, MPI_COMM_WORLD, &status);
+        MPI_Get_count(&status, MPI_CHAR, &length);
+        char * directoryContents = (char*)malloc(sizeof(char) * length);
+        MPI_Recv(directoryContents, length, MPI_CHAR, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+        char strNum[99]; 
+        sprintf(strNum, "%d", i); 
+        strcat(output, "    p");
+        strcat(output, strNum);
+        strcat(output, "\n");
+        strcat(output, directoryContents);
+        free(directoryContents);
+    }
+    printf("%s\n", output);
 }
 
 void shellEnd(enum Commands command, int *commSz){
@@ -352,7 +396,7 @@ void shellProcess(int *commSz, bool *endProg) {
             break;
 
         case ls:
-            //MPI_Send(&command, 1, MPI_INT, i, 0, MPI_COMM_WORLD);
+            shellLs(commSz, command);
             break;
 
         case lls:
